@@ -1056,21 +1056,32 @@ static void rd_kafka_transport_io_event (rd_kafka_transport_t *rktrans,
  *
  * Locality: broker thread 
  */
-void rd_kafka_transport_io_serve (rd_kafka_transport_t *rktrans,
+void rd_kafka_transport_io_serve (rd_kafka_transport_t **rktrans,
+								  int relevant_transport_count,
                                   int timeout_ms) {
-	rd_kafka_broker_t *rkb = rktrans->rktrans_rkb;
+	struct pollfd *fds = rd_malloc(sizeof(struct pollfd) * relevant_transport_count);
+	int i;
 	int events;
+	for(i = 0; i < relevant_transport_count; i++) {
+		rd_kafka_broker_t *rkb = rktrans[i]->rktrans_rkb;
 
-	if (rd_kafka_bufq_cnt(&rkb->rkb_waitresps) < rkb->rkb_max_inflight &&
-	    rd_kafka_bufq_cnt(&rkb->rkb_outbufs) > 0)
-		rd_kafka_transport_poll_set(rkb->rkb_transport, POLLOUT);
+		if (rd_kafka_bufq_cnt(&rkb->rkb_waitresps) < rkb->rkb_max_inflight &&
+			rd_kafka_bufq_cnt(&rkb->rkb_outbufs) > 0)
+				rd_kafka_transport_poll_set(rkb->rkb_transport, POLLOUT);
+		fds[i].fd = rktrans[i]->rktrans_pfd.fd;
+		fds[i].events = rkb->rkb_transport->rktrans_pfd.events;
+	}
 
-	if ((events = rd_kafka_transport_poll(rktrans, timeout_ms)) <= 0)
-                return;
-
-        rd_kafka_transport_poll_clear(rktrans, POLLOUT);
-
-	rd_kafka_transport_io_event(rktrans, events);
+	int r = poll(fds, relevant_transport_count, timeout_ms);
+	if (r <= 0)
+		return;
+	
+	for(i = 0; i < relevant_transport_count; i++) {
+		events = rktrans[i]->rktrans_pfd.revents = fds[i].revents;
+		rd_kafka_transport_poll_clear(rktrans[i], POLLOUT);
+		rd_kafka_transport_io_event(rktrans[i], events);
+	}
+	rd_free(fds);
 }
 
 

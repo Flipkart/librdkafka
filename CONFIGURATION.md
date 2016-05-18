@@ -3,9 +3,10 @@
 
 Property                                 | C/P | Range           |       Default | Description              
 -----------------------------------------|-----|-----------------|--------------:|--------------------------
-builtin.features                         |  *  |                 | gzip, snappy, ssl, sasl, regex | Indicates the builtin features for this build of librdkafka. An application can either query this value or attempt to set it with its list of required features to check for library support. <br>*Type: CSV flags*
+builtin.features                         |  *  |                 | gzip, snappy, ssl, regex | Indicates the builtin features for this build of librdkafka. An application can either query this value or attempt to set it with its list of required features to check for library support. <br>*Type: CSV flags*
 client.id                                |  *  |                 |       rdkafka | Client identifier. <br>*Type: string*
 metadata.broker.list                     |  *  |                 |               | Initial list of brokers. The application may also use `rd_kafka_brokers_add()` to add brokers during runtime. <br>*Type: string*
+broker.thread.count                      |  *  | 1 .. 1000       |             1 | Broker threads to be run. Should be set to a value less than (starting at 1) or equal to the number of brokers as appropriate for the workload. <br>*Type: integer*
 bootstrap.servers                        |  *  |                 |               | Alias for `metadata.broker.list`
 message.max.bytes                        |  *  | 1000 .. 1000000000 |       1000000 | Maximum transmit message size. <br>*Type: integer*
 receive.message.max.bytes                |  *  | 1000 .. 1000000000 |     100000000 | Maximum receive message size. This is a safety precaution to avoid memory exhaustion in case of protocol hickups. The value should be at least fetch.message.max.bytes * number of partitions consumed from + messaging overhead (e.g. 200000 bytes). <br>*Type: integer*
@@ -42,18 +43,12 @@ internal.termination.signal              |  *  | 0 .. 128        |             0
 api.version.request                      |  *  | true, false     |         false | Request broker's supported API versions to adjust functionality to available protocol features. If set to false the fallback version `broker.version.fallback` will be used. **NOTE**: Depends on broker version >=0.10.0. If the request is not supported by (an older) broker the `broker.version.fallback` fallback is used. <br>*Type: boolean*
 api.version.fallback.ms                  |  *  | 0 .. 604800000  |       1200000 | Dictates how long the `broker.version.fallback` fallback is used in the case the ApiVersionRequest fails. **NOTE**: The ApiVersionRequest is only issued when a new connection to the broker is made (such as after an upgrade). <br>*Type: integer*
 broker.version.fallback                  |  *  |                 |         0.9.0 | Older broker versions (<0.10.0) provides no way for a client to query for supported protocol features (ApiVersionRequest, see `api.version.request`) making it impossible for the client to know what features it may use. As a workaround a user may set this property to the expected broker version and the client will automatically adjust its feature set accordingly if the ApiVersionRequest fails (or is disabled). The fallback broker version will be used for `api.version.fallback.ms`. Valid values are: 0.9.0, 0.8.2, 0.8.1, 0.8.0. <br>*Type: string*
-security.protocol                        |  *  | plaintext, ssl, sasl_plaintext, sasl_ssl |     plaintext | Protocol used to communicate with brokers. <br>*Type: enum value*
+security.protocol                        |  *  | plaintext, ssl  |     plaintext | Protocol used to communicate with brokers. <br>*Type: enum value*
 ssl.cipher.suites                        |  *  |                 |               | A cipher suite is a named combination of authentication, encryption, MAC and key exchange algorithm used to negotiate the security settings for a network connection using TLS or SSL network protocol. See manual page for `ciphers(1)` and `SSL_CTX_set_cipher_list(3). <br>*Type: string*
 ssl.key.location                         |  *  |                 |               | Path to client's private key (PEM) used for authentication. <br>*Type: string*
 ssl.key.password                         |  *  |                 |               | Private key passphrase <br>*Type: string*
 ssl.certificate.location                 |  *  |                 |               | Path to client's public key (PEM) used for authentication. <br>*Type: string*
 ssl.ca.location                          |  *  |                 |               | File or directory path to CA certificate(s) for verifying the broker's key. <br>*Type: string*
-sasl.mechanisms                          |  *  |                 |        GSSAPI | Space separated list of eligible SASL mechanisms <br>*Type: string*
-sasl.kerberos.service.name               |  *  |                 |         kafka | Kerberos principal name that Kafka runs as. <br>*Type: string*
-sasl.kerberos.principal                  |  *  |                 |   kafkaclient | This client's Kerberos principal name. <br>*Type: string*
-sasl.kerberos.kinit.cmd                  |  *  |                 |         kinit | Kerberos kinit command path. <br>*Type: string*
-sasl.kerberos.keytab                     |  *  |                 |               | Path to Kerberos keytab file. Uses system default if not set. <br>*Type: string*
-sasl.kerberos.min.time.before.relogin    |  *  | 1 .. 86400000   |         60000 | Minimum time in milliseconds between key refresh attempts. <br>*Type: integer*
 group.id                                 |  *  |                 |               | Client group id string. All clients sharing the same group.id belong to the same group. <br>*Type: string*
 partition.assignment.strategy            |  *  |                 | range,roundrobin | Name of partition assignment strategy to use when elected group leader assigns partitions to group members. <br>*Type: string*
 session.timeout.ms                       |  *  | 1 .. 3600000    |         30000 | Client group session and failure detection timeout. <br>*Type: integer*

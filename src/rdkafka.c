@@ -1145,6 +1145,32 @@ rd_kafka_t *rd_kafka_new (rd_kafka_type_t type, rd_kafka_conf_t *conf,
 					err);
 		return NULL;
 	}
+	/* Create broker threads and initialize related things */
+	mtx_init(&rk->rk_broker_thread_allocation_lock, mtx_plain);
+	rk->rk_broker_threads = rd_calloc(rk->rk_conf.broker_thread_count, sizeof(rd_kafka_broker_thread_t));
+	while(rk->rk_broker_thread_count < rk->rk_conf.broker_thread_count) {
+		rd_kafka_broker_thread_t *b_thd = &rk->rk_broker_threads[rk->rk_broker_thread_count];
+		b_thd->rk = rk;
+		mtx_init(&b_thd->broker_addition_lock, mtx_plain);
+		TAILQ_INIT(&b_thd->brokers);
+		if ((err = thrd_create(&b_thd->thd, rd_kafka_brokers_main, b_thd)) != thrd_success) {
+				if (errstr)
+						rd_snprintf(errstr, errstr_size,
+									"Failed to create broker thread: %s (%i)",
+									rd_strerror(err), err);
+				rd_kafka_wrunlock(rk);
+				rd_kafka_destroy_internal(rk);
+#ifndef _MSC_VER
+				/* Restore sigmask of caller */
+				pthread_sigmask(SIG_SETMASK, &oldset, NULL);
+#endif
+				rd_kafka_set_last_error(RD_KAFKA_RESP_ERR__CRIT_SYS_RESOURCE,
+										err);
+				return NULL;
+		}
+		rk->rk_broker_thread_count++;
+	}
+	
 
         rd_kafka_wrunlock(rk);
 
