@@ -444,6 +444,15 @@ void rd_kafka_destroy_final (rd_kafka_t *rk) {
         rd_kafka_wrlock(rk);
         rd_kafka_wrunlock(rk);
 
+		int i;
+		rd_kafka_broker_thread_t *t;
+		for (i = 0; i < rk->rk_broker_thread_count; i++) {
+			t = &rk->rk_broker_threads[i];
+			mtx_destroy(&t->broker_addition_lock);
+		}
+		rd_free(rk->rk_broker_threads);
+		mtx_destroy(&rk->rk_broker_thread_allocation_lock);
+
         rd_kafka_assignors_term(rk);
 
         rd_kafka_timers_destroy(&rk->rk_timers);
@@ -540,29 +549,28 @@ static void rd_kafka_destroy_internal (rd_kafka_t *rk) {
 		rd_kafka_wrlock(rk);
 	}
 
-        /* Decommission brokers.
-         * Broker thread holds a refcount and detects when broker refcounts
-         * reaches 1 and then decommissions itself. */
-        TAILQ_FOREACH_SAFE(rkb, &rk->rk_brokers, rkb_link, rkb_tmp) {
-                /* Add broker's thread to wait_thrds list for later joining */
-                thrd = malloc(sizeof(*thrd));
-                *thrd = rkb->rkb_thread;
-                rd_list_add(&wait_thrds, thrd);
-                rd_kafka_wrunlock(rk);
-
+    /* Decommission broker & broker-threads. */
+	TAILQ_FOREACH_SAFE(rkb, &rk->rk_brokers, rkb_link, rkb_tmp) {
+		rd_kafka_wrunlock(rk);
+		rd_kafka_broker_destroy(rkb); /* rk_broker's refcount */
+		rd_kafka_wrlock(rk);
+	}
+	rd_kafka_assert(rk, mtx_lock(&rk->rk_broker_thread_allocation_lock) == thrd_success);
+	i = rk->rk_broker_thread_count;
+	while(i > 0) {
+		thrd = rd_malloc(sizeof(*thrd));
+		rd_kafka_broker_thread_t *rkbt = &rk->rk_broker_threads[--i];
+		*thrd = rkbt->thd;
+		rd_list_add(&wait_thrds, thrd);
 #ifndef _MSC_VER
-                /* Interrupt IO threads to speed up termination. */
-                if (rk->rk_conf.term_sig)
-			pthread_kill(rkb->rkb_thread, rk->rk_conf.term_sig);
+		/* Interrupt IO threads to speed up termination. */
+		if (rk->rk_conf.term_sig)
+			pthread_kill(rkbt->thd, rk->rk_conf.term_sig);
 #endif
+	}
+	mtx_unlock(&rk->rk_broker_thread_allocation_lock);
+    rd_kafka_wrunlock(rk);
 
-                rd_kafka_broker_destroy(rkb);
-
-                rd_kafka_wrlock(rk);
-        }
-
-
-        rd_kafka_wrunlock(rk);
 
 	/* Purge op-queue */
         rd_kafka_q_disable(&rk->rk_rep);

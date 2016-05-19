@@ -2359,8 +2359,7 @@ static void rd_kafka_broker_serve (rd_kafka_broker_thread_t *rkbt, int jj_ign) {
 		rd_kafka_op_t *rko;
 		
 		if (likely(rkb->rkb_do_iopoll && (rkb->rkb_transport != NULL))) {
-			transports[relevant_transport_count] = rkb->rkb_transport;
-			relevant_transport_count++;
+			transports[relevant_transport_count++] = rkb->rkb_transport;
 		}
 
 		/* Serve broker ops */
@@ -2387,6 +2386,8 @@ static void rd_kafka_broker_serve (rd_kafka_broker_thread_t *rkbt, int jj_ign) {
 		if (rd_interval(&rkb->rkb_timeout_scan_intvl, 1000000, now) > 0)
 			rd_kafka_broker_timeout_scan(rkb, now);
 	}
+
+	rd_free(transports);
 }
 
 
@@ -3724,7 +3725,7 @@ static int rd_kafka_broker_thread_main (void *arg) {
 
 int rd_kafka_brokers_main(void *arg) {
 	rd_kafka_broker_thread_t *rkbt = arg;
-	rd_kafka_broker_t *rkb = NULL;
+	rd_kafka_broker_t *rkb = NULL, *rkb_tmp = NULL;
 	rd_kafka_broker_t **active_brokers = NULL;
 	int active_broker_count = 0;
 	rd_kafka_t *rk = rkbt->rk;
@@ -3735,17 +3736,19 @@ int rd_kafka_brokers_main(void *arg) {
 	while (likely(!rd_kafka_terminating(rk))) {
 		rd_kafka_assert(rk, mtx_lock(&rkbt->broker_addition_lock) == thrd_success);
 		if (rkbt->broker_assignment_changed) {
-			if (active_broker_count > 0) {
-				while(active_broker_count > 0) {
-					rd_kafka_broker_destroy(active_brokers[active_broker_count--]);
-				}
+			rd_kafka_log(rk, LOG_DEBUG, "BROKER", "Broker-Thd %p observed "
+						 "assignment change (old broker count: %d, now: %d)",
+						 rkbt, active_broker_count, rkbt->brokers_assigned);
+			while(active_broker_count > 0) {
+				/* processing-loop refcount */
+				rd_kafka_broker_destroy(active_brokers[--active_broker_count]);
 			}
 			rd_free(active_brokers);
 			active_broker_count = 0;
 			active_brokers = rd_malloc(sizeof(rd_kafka_broker_t *) * rkbt->brokers_assigned);
 			TAILQ_FOREACH(rkb, &rkbt->brokers, assigned_thd_link) {
 				active_brokers[active_broker_count++] = rkb;
-				rd_kafka_broker_keep(rkb);
+				rd_kafka_broker_keep(rkb);	/* processing-loop refcount */
 			}
 			rkbt->broker_assignment_changed = 0;
 		}
@@ -3865,6 +3868,19 @@ int rd_kafka_brokers_main(void *arg) {
 		rd_kafka_broker_serve(rkbt, RD_POLL_NOWAIT);
 
 	}
+
+	while (active_broker_count > 0) {
+		/* processing-loop refcount */
+		rd_kafka_broker_destroy(active_brokers[--active_broker_count]); 
+	}
+	rd_free(active_brokers);
+	rd_kafka_assert(rk, mtx_lock(&rkbt->broker_addition_lock) == thrd_success);
+	TAILQ_FOREACH_SAFE(rkb, &rkbt->brokers, assigned_thd_link, rkb_tmp) {
+		rd_kafka_broker_fail(rkb, LOG_DEBUG, RD_KAFKA_RESP_ERR__DESTROY, NULL);
+		rd_kafka_broker_destroy(rkb);  /* rk_broker's refcount */
+	}
+	mtx_unlock(&rkbt->broker_addition_lock);
+	
 	rd_atomic32_sub(&rd_kafka_thread_cnt_curr, 1);
 
 	return 0;

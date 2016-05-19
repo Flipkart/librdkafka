@@ -1073,13 +1073,12 @@ void rd_kafka_transport_io_serve (rd_kafka_transport_t **rktrans,
 	}
 
 	int r = poll(fds, relevant_transport_count, timeout_ms);
-	if (r <= 0)
-		return;
-	
-	for(i = 0; i < relevant_transport_count; i++) {
-		events = rktrans[i]->rktrans_pfd.revents = fds[i].revents;
-		rd_kafka_transport_poll_clear(rktrans[i], POLLOUT);
-		rd_kafka_transport_io_event(rktrans[i], events);
+	if (r > 0) {
+		for(i = 0; i < relevant_transport_count; i++) {
+			events = rktrans[i]->rktrans_pfd.revents = fds[i].revents;
+			rd_kafka_transport_poll_clear(rktrans[i], POLLOUT);
+			rd_kafka_transport_io_event(rktrans[i], events);
+		}
 	}
 	rd_free(fds);
 }
