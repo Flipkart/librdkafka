@@ -489,6 +489,7 @@ static void rd_kafka_destroy_app (rd_kafka_t *rk, int blocking) {
         thrd_t thrd;
 
         rd_kafka_dbg(rk, ALL, "DESTROY", "Terminating instance");
+		/* Loose our special reference to the internal broker. */
         rd_kafka_wrlock(rk);
         thrd = rk->rk_thread;
 	rd_atomic32_add(&rk->rk_terminate, 1);
@@ -523,7 +524,6 @@ void rd_kafka_destroy (rd_kafka_t *rk) {
  */
 static void rd_kafka_destroy_internal (rd_kafka_t *rk) {
 	rd_kafka_itopic_t *rkt, *rkt_tmp;
-	rd_kafka_broker_t *rkb, *rkb_tmp;
         rd_list_t wait_thrds;
         thrd_t *thrd;
         int i;
@@ -549,12 +549,7 @@ static void rd_kafka_destroy_internal (rd_kafka_t *rk) {
 		rd_kafka_wrlock(rk);
 	}
 
-    /* Decommission broker & broker-threads. */
-	TAILQ_FOREACH_SAFE(rkb, &rk->rk_brokers, rkb_link, rkb_tmp) {
-		rd_kafka_wrunlock(rk);
-		rd_kafka_broker_destroy(rkb); /* rk_broker's refcount */
-		rd_kafka_wrlock(rk);
-	}
+    /* Decommission broker-threads. */
 	rd_kafka_assert(rk, mtx_lock(&rk->rk_broker_thread_allocation_lock) == thrd_success);
 	i = rk->rk_broker_thread_count;
 	while(i > 0) {
@@ -576,18 +571,6 @@ static void rd_kafka_destroy_internal (rd_kafka_t *rk) {
         rd_kafka_q_disable(&rk->rk_rep);
 	rd_kafka_q_purge(&rk->rk_rep);
 
-	/* Loose our special reference to the internal broker. */
-        mtx_lock(&rk->rk_internal_rkb_lock);
-	if ((rkb = rk->rk_internal_rkb)) {
-                rk->rk_internal_rkb = NULL;
-                thrd = malloc(sizeof(*thrd));
-                *thrd = rkb->rkb_thread;
-                rd_list_add(&wait_thrds, thrd);
-        }
-        mtx_unlock(&rk->rk_internal_rkb_lock);
-	if (rkb)
-		rd_kafka_broker_destroy(rkb);
-
 
         /* Join broker threads */
         RD_LIST_FOREACH(thrd, &wait_thrds, i) {
@@ -597,6 +580,12 @@ static void rd_kafka_destroy_internal (rd_kafka_t *rk) {
         }
 
         rd_list_destroy(&wait_thrds, NULL);
+
+		mtx_lock(&rk->rk_internal_rkb_lock);
+		rk->rk_internal_rkb->rkb_thread = thrd_current();
+		rd_kafka_broker_destroy(rk->rk_internal_rkb);
+		rk->rk_internal_rkb = NULL;
+		mtx_unlock(&rk->rk_internal_rkb_lock);
 
 }
 

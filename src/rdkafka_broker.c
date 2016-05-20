@@ -3741,7 +3741,8 @@ int rd_kafka_brokers_main(void *arg) {
 						 rkbt, active_broker_count, rkbt->brokers_assigned);
 			while(active_broker_count > 0) {
 				/* processing-loop refcount */
-				rd_kafka_broker_destroy(active_brokers[--active_broker_count]);
+				active_broker_count--;
+				rd_kafka_broker_destroy(active_brokers[active_broker_count]);
 			}
 			rd_free(active_brokers);
 			active_broker_count = 0;
@@ -3845,7 +3846,7 @@ int rd_kafka_brokers_main(void *arg) {
 						} else {
 								/* Connection torn down, sleep a short while to
 								 * avoid busy-looping on protocol errors */
-								rd_usleep(100*1000/*100ms*/, &rk->rk_terminate);
+								//rd_usleep(100*1000/*100ms*/, &rk->rk_terminate);
 						}
 						break;
 				}
@@ -3853,16 +3854,18 @@ int rd_kafka_brokers_main(void *arg) {
 				if (rkb->rkb_source != RD_KAFKA_INTERNAL) {
 					rd_kafka_wrlock(rk);
 					TAILQ_REMOVE(&rk->rk_brokers, rkb, rkb_link);
+					rd_kafka_dbg(rk, BROKER, "CLEANUP_FAILURE", "Removing rk-broker (due to natural death): %p (%s)", rkb, rkb->rkb_name);
+					rd_kafka_wrunlock(rk);
 					rd_kafka_assert(rk, mtx_lock(&rkbt->broker_addition_lock) == thrd_success);
 					TAILQ_REMOVE(&rkbt->brokers, rkb, assigned_thd_link);
 					rkbt->brokers_assigned--;
 					rkbt->broker_assignment_changed = 1;
 					mtx_unlock(&rkbt->broker_addition_lock);
 					(void)rd_atomic32_sub(&rk->rk_broker_cnt, 1);
-					rd_kafka_wrunlock(rk);
 				}
 				rd_kafka_broker_fail(rkb, LOG_DEBUG, RD_KAFKA_RESP_ERR__DESTROY, NULL);
-				rd_kafka_broker_destroy(rkb);
+				rd_kafka_broker_destroy(rkb);  /* broker thread's refcnt */
+				rd_kafka_broker_destroy(rkb);  /* rk_broker's refcount */
 			}
 		}
 		rd_kafka_broker_serve(rkbt, RD_POLL_NOWAIT);
@@ -3870,16 +3873,24 @@ int rd_kafka_brokers_main(void *arg) {
 	}
 
 	while (active_broker_count > 0) {
+		active_broker_count--;
 		/* processing-loop refcount */
-		rd_kafka_broker_destroy(active_brokers[--active_broker_count]); 
+		rd_kafka_broker_destroy(active_brokers[active_broker_count]); 
 	}
 	rd_free(active_brokers);
+	rd_kafka_wrlock(rk);
 	rd_kafka_assert(rk, mtx_lock(&rkbt->broker_addition_lock) == thrd_success);
 	TAILQ_FOREACH_SAFE(rkb, &rkbt->brokers, assigned_thd_link, rkb_tmp) {
+		rd_kafka_dbg(rk, BROKER, "CLEANUP_EXIT", "Removing rk-broker (due to rk shutdown): %p (%s)", rkb, rkb->rkb_name);
 		rd_kafka_broker_fail(rkb, LOG_DEBUG, RD_KAFKA_RESP_ERR__DESTROY, NULL);
-		rd_kafka_broker_destroy(rkb);  /* rk_broker's refcount */
+		rd_kafka_broker_destroy(rkb);  /* broker thread's refcnt */
+		if (rkb->rkb_source != RD_KAFKA_INTERNAL) {
+			TAILQ_REMOVE(&rk->rk_brokers, rkb, rkb_link);
+			rd_kafka_broker_destroy(rkb);  /* rk_broker's refcount */
+		}
 	}
 	mtx_unlock(&rkbt->broker_addition_lock);
+	rd_kafka_wrunlock(rk);
 	
 	rd_atomic32_sub(&rd_kafka_thread_cnt_curr, 1);
 
@@ -3977,6 +3988,7 @@ int rd_kafka_assign_broker_thread(rd_kafka_t *rk, rd_kafka_broker_t *rkb) {
 			rkbt->broker_assignment_changed = 1;
 			rkb->rkb_thread = rkbt->thd;
 			assigned = 1;
+			rd_kafka_log(rk, LOG_DEBUG, "BROKER", "Adding broker: %s to thd: %p", rkb->rkb_name, rkbt);
 		}
 	}
 	if (thrd_success == locked_broker_addition_lock) mtx_unlock(&rkbt->broker_addition_lock);
