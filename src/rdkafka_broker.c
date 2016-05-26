@@ -3722,6 +3722,16 @@ static int rd_kafka_broker_thread_main (void *arg) {
 	return 0;
 }
 
+static void rd_kafka_final_op_queue_drain(rd_kafka_broker_t *rkb, rd_kafka_broker_thread_t *rkbt, int force) {
+    if (! force) {
+		rd_kafka_assert(rkbt->rk, mtx_lock(&rkbt->last_op_push_mtx) == thrd_success);
+		while (! rkbt->last_op_pushed) {
+		    cnd_wait(&rkbt->last_op_push_cond, &rkbt->last_op_push_mtx);
+		}
+		mtx_unlock(&rkbt->last_op_push_mtx);
+    }
+	rd_kafka_broker_serve(rkbt, RD_POLL_NOWAIT);
+}
 
 int rd_kafka_brokers_main(void *arg) {
 	rd_kafka_broker_thread_t *rkbt = arg;
@@ -3852,6 +3862,7 @@ int rd_kafka_brokers_main(void *arg) {
 				}
 			} else {
 				if (rkb->rkb_source != RD_KAFKA_INTERNAL) {
+					rd_kafka_final_op_queue_drain(rkb, rkbt, 1);
 					rd_kafka_wrlock(rk);
 					TAILQ_REMOVE(&rk->rk_brokers, rkb, rkb_link);
 					rd_kafka_dbg(rk, BROKER, "CLEANUP_FAILURE", "Removing rk-broker (due to natural death): %p (%s)", rkb, rkb->rkb_name);
@@ -3875,9 +3886,13 @@ int rd_kafka_brokers_main(void *arg) {
 	while (active_broker_count > 0) {
 		active_broker_count--;
 		/* processing-loop refcount */
-		rd_kafka_broker_destroy(active_brokers[active_broker_count]); 
+		rd_kafka_broker_destroy(active_brokers[active_broker_count]);
 	}
 	rd_free(active_brokers);
+	TAILQ_FOREACH(rkb, &rkbt->brokers, assigned_thd_link) {
+		rd_kafka_dbg(rk, BROKER, "CLEANUP_EXIT", "Drain op-queue for broker (due to rk shutdown): %p (%s)", rkb, rkb->rkb_name);
+		rd_kafka_final_op_queue_drain(rkb, rkbt, 0);
+	}
 	rd_kafka_wrlock(rk);
 	rd_kafka_assert(rk, mtx_lock(&rkbt->broker_addition_lock) == thrd_success);
 	TAILQ_FOREACH_SAFE(rkb, &rkbt->brokers, assigned_thd_link, rkb_tmp) {

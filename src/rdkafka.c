@@ -448,6 +448,8 @@ void rd_kafka_destroy_final (rd_kafka_t *rk) {
 		rd_kafka_broker_thread_t *t;
 		for (i = 0; i < rk->rk_broker_thread_count; i++) {
 			t = &rk->rk_broker_threads[i];
+			cnd_destroy(&t->last_op_push_cond);
+			mtx_destroy(&t->last_op_push_mtx);
 			mtx_destroy(&t->broker_addition_lock);
 		}
 		rd_free(rk->rk_broker_threads);
@@ -555,6 +557,10 @@ static void rd_kafka_destroy_internal (rd_kafka_t *rk) {
 	while(i > 0) {
 		thrd = rd_malloc(sizeof(*thrd));
 		rd_kafka_broker_thread_t *rkbt = &rk->rk_broker_threads[--i];
+		rd_kafka_assert(rk, mtx_lock(&rkbt->last_op_push_mtx) == thrd_success);
+		rkbt->last_op_pushed = 1;
+		cnd_signal(&rkbt->last_op_push_cond);
+		mtx_unlock(&rkbt->last_op_push_mtx);
 		*thrd = rkbt->thd;
 		rd_list_add(&wait_thrds, thrd);
 #ifndef _MSC_VER
@@ -565,8 +571,7 @@ static void rd_kafka_destroy_internal (rd_kafka_t *rk) {
 	}
 	mtx_unlock(&rk->rk_broker_thread_allocation_lock);
     rd_kafka_wrunlock(rk);
-
-
+    
 	/* Purge op-queue */
         rd_kafka_q_disable(&rk->rk_rep);
 	rd_kafka_q_purge(&rk->rk_rep);
@@ -1149,6 +1154,8 @@ rd_kafka_t *rd_kafka_new (rd_kafka_type_t type, rd_kafka_conf_t *conf,
 		rd_kafka_broker_thread_t *b_thd = &rk->rk_broker_threads[rk->rk_broker_thread_count];
 		b_thd->rk = rk;
 		mtx_init(&b_thd->broker_addition_lock, mtx_plain);
+		mtx_init(&b_thd->last_op_push_mtx, mtx_plain);
+		cnd_init(&b_thd->last_op_push_cond);
 		TAILQ_INIT(&b_thd->brokers);
 		if ((err = thrd_create(&b_thd->thd, rd_kafka_brokers_main, b_thd)) != thrd_success) {
 				if (errstr)

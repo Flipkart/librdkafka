@@ -188,6 +188,9 @@ struct rd_kafka_broker_thread_s {
 	rd_kafka_t *rk;
 	int brokers_assigned;
 	int broker_assignment_changed;
+	mtx_t last_op_push_mtx;
+	cnd_t last_op_push_cond;
+	int last_op_pushed;
 };
 
 #define rd_kafka_broker_keep(rkb)   rd_refcnt_add(&(rkb)->rkb_refcnt)
