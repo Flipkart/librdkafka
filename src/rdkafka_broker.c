@@ -3893,19 +3893,20 @@ int rd_kafka_brokers_main(void *arg) {
 		rd_kafka_dbg(rk, BROKER, "CLEANUP_EXIT", "Drain op-queue for broker (due to rk shutdown): %p (%s)", rkb, rkb->rkb_name);
 		rd_kafka_final_op_queue_drain(rkb, rkbt, 0);
 	}
-	rd_kafka_wrlock(rk);
 	rd_kafka_assert(rk, mtx_lock(&rkbt->broker_addition_lock) == thrd_success);
 	TAILQ_FOREACH_SAFE(rkb, &rkbt->brokers, assigned_thd_link, rkb_tmp) {
 		rd_kafka_dbg(rk, BROKER, "CLEANUP_EXIT", "Removing rk-broker (due to rk shutdown): %p (%s)", rkb, rkb->rkb_name);
-		rd_kafka_broker_fail(rkb, LOG_DEBUG, RD_KAFKA_RESP_ERR__DESTROY, NULL);
-		rd_kafka_broker_destroy(rkb);  /* broker thread's refcnt */
 		if (rkb->rkb_source != RD_KAFKA_INTERNAL) {
+			rd_kafka_wrlock(rk);
 			TAILQ_REMOVE(&rk->rk_brokers, rkb, rkb_link);
+			(void)rd_atomic32_sub(&rk->rk_broker_cnt, 1);
+			rd_kafka_wrunlock(rk);
 			rd_kafka_broker_destroy(rkb);  /* rk_broker's refcount */
 		}
+		rd_kafka_broker_fail(rkb, LOG_DEBUG, RD_KAFKA_RESP_ERR__DESTROY, NULL);
+		rd_kafka_broker_destroy(rkb);  /* broker thread's refcnt */
 	}
 	mtx_unlock(&rkbt->broker_addition_lock);
-	rd_kafka_wrunlock(rk);
 	
 	rd_atomic32_sub(&rd_kafka_thread_cnt_curr, 1);
 
