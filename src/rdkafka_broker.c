@@ -2410,10 +2410,8 @@ static void rd_kafka_broker_toppars_serve (rd_kafka_broker_t *rkb) {
 
 /**
  * Idle function for unassigned brokers
- * If \p timeout_ms is non-zero the serve loop will be exited regardless
- * of state after this long (approximately).
  */
-static void rd_kafka_broker_ua_idle (rd_kafka_broker_t *rkb, int timeout_ms) {
+static void rd_kafka_broker_ua_idle (rd_kafka_broker_t *rkb) {
 	rd_kafka_broker_toppars_serve(rkb);
 }
 
@@ -3648,35 +3646,36 @@ int rd_kafka_brokers_main(void *arg) {
                                                (int)(rkb->rkb_rk->rk_conf.
 													 reconnect_jitter_ms*1.5))
                                      * 1000))) < 0) {
-                                rd_rkb_dbg(rkb, BROKER, "RECONNECT",
-                                           "Delaying next reconnect by %dms",
-                                           -(int)(backoff/1000));
-                                rd_kafka_broker_ua_idle(rkb,
-														(int)(-backoff / 1000));
-                                rkb->rkb_ts_connect = 0;
-                                continue;
-                        }
 
-						/* Initiate asynchronous connection attempt.
-						 * Only the host lookup is blocking here. */
-						if (rd_kafka_broker_connect(rkb) == -1) {
-								rd_rkb_dbg(rkb, BROKER, "CONNECT",
-                                           "Failed to connect.");
+
+                                rd_kafka_broker_ua_idle(rkb);
+								rd_rkb_dbg(rkb, BROKER, "RECONNECT",
+										   "Not reconnecting, as haven't"
+										   " backed-off enough. Backoff ~ %dms",
+										   -(int)(backoff/1000));
+                                continue;
+                        } else {
+							rkb->rkb_ts_connect = 0;
+							if (rd_kafka_broker_connect(rkb) == -1) {
+									rd_rkb_dbg(rkb, BROKER, "CONNECT",
+											   "Failed to connect.");
+							}
 						}
+
 						break;
 
 				case RD_KAFKA_BROKER_STATE_CONNECT:
 				case RD_KAFKA_BROKER_STATE_AUTH:
 				case RD_KAFKA_BROKER_STATE_APIVERSION_QUERY:
 						/* Asynchronous connect in progress. */
-						rd_kafka_broker_ua_idle(rkb, 0);
+						rd_kafka_broker_ua_idle(rkb);
 						break;
 
                 case RD_KAFKA_BROKER_STATE_UPDATE:
                         /* FALLTHRU */
 				case RD_KAFKA_BROKER_STATE_UP:
 						if (rkb->rkb_nodeid == RD_KAFKA_NODEID_UA)
-								rd_kafka_broker_ua_idle(rkb, 0);
+								rd_kafka_broker_ua_idle(rkb);
 						else if (rk->rk_type == RD_KAFKA_PRODUCER)
 								rd_kafka_broker_producer_serve(rkb);
 						else if (rk->rk_type == RD_KAFKA_CONSUMER)
@@ -3704,10 +3703,6 @@ int rd_kafka_brokers_main(void *arg) {
 										   "failed %d request(s) in "
 										   "retry+outbuf", r);
 
-						} else {
-								/* Connection torn down, sleep a short while to
-								 * avoid busy-looping on protocol errors */
-								//rd_usleep(100*1000/*100ms*/, &rk->rk_terminate);
 						}
 						break;
 				}
