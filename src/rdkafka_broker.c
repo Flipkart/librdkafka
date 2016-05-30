@@ -3616,7 +3616,7 @@ int rd_kafka_brokers_main(void *arg) {
 		int i;
 		for(i = 0; i < active_broker_count; i++) {
 			rkb = active_brokers[i];
-			if (! rd_kafka_broker_terminating(rkb)) {
+			if (likely(! rd_kafka_broker_terminating(rkb))) {
 				rkb->rkb_do_iopoll = 1;
 				rd_ts_t backoff;
 				switch (rkb->rkb_state)
@@ -3725,7 +3725,6 @@ int rd_kafka_brokers_main(void *arg) {
 			}
 		}
 		rd_kafka_broker_serve(rk, active_brokers, active_broker_count);
-
 	}
 	rd_kafka_final_op_queue_drain(rkbt, active_brokers, active_broker_count);
 	rd_kafka_wrlock(rk);
